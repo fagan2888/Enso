@@ -4,8 +4,46 @@ import os.path
 from time import strptime
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
+import random
+from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit, train_test_split
 from enso.config import RESULTS_DIRECTORY, FEATURES_DIRECTORY
+from collections import defaultdict
+
+class SafeStratifiedShuffleSplit(StratifiedShuffleSplit):
+    def _choose_starting_points(self, idxs, Y, n_points=1):
+        """
+        Ensures a minimum of one label per class is chosen
+        """
+        train_idxs = []
+        test_idxs = []
+        classes = set(Y)
+        idxs_by_class = defaultdict(list)
+        for i, y in enumerate(Y):
+            idxs_by_class[y].append(i)
+        for _ in range(n_points):
+            for c in classes:
+                train_index = random.choice(idxs_by_class[c])
+                idxs_by_class[c].remove(train_index)
+                train_idxs.append(train_index)
+                test_index = random.choice(idxs_by_class[c])
+                idxs_by_class[c].remove(test_index)
+                test_idxs.append(test_index)
+        remaining_idxs = [idx for idxs in idxs_by_class.values() for idx in idxs]
+        return train_idxs, test_idxs, remaining_idxs
+        
+    def split(self, X, Y):
+        Y = np.asarray(Y)
+        idxs = np.arange(len(Y))
+        for _ in range(self.n_splits):
+            train_idxs, test_idxs, remaining_idxs = self._choose_starting_points(idxs, Y, n_points=1)
+            train_remaining_idxs, test_remaining_idxs = train_test_split(
+                remaining_idxs, test_size=1/self.n_splits, stratify=Y[remaining_idxs]
+            ) 
+            yield train_remaining_idxs + train_idxs, test_remaining_idxs + test_idxs
+
+class RationalizedStratifiedShuffleSplit(SafeStratifiedShuffleSplit):
+    def split(self, X, Y):
+        yield from super().split(X, [y[1] for y in Y])
 
 class RationalizedStratifiedShuffleSplit(StratifiedShuffleSplit):
     
